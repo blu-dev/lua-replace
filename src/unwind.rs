@@ -176,7 +176,6 @@ unsafe fn step_replace(this: *mut u64) -> u64 {
         
         if ip_is_in_module(ip) {
             let pc_end = byte_search(ip as *const u32, 0xB000B1E5, 0x2000);
-            println!("in module: {:X}", pc_end as u64);
             let unwind_info_ptr = this.offset(0x44);
             *unwind_info_ptr.offset(0) = ip; // doesn't get checked for some reason
             *unwind_info_ptr.offset(1) = pc_end as u64;
