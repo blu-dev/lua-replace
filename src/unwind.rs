@@ -95,15 +95,6 @@ unsafe extern "C" fn custom_personality(version: i32, actions: u64, exception_cl
                 _Unwind_SetIP(context, landing_pad);
                 ret = _URC_INSTALL_CONTEXT;
             }
-            // let new_ip = byte_search(ip as *const u32, 0xB000B1E5, 0x2000).offset(1); // 0x2000 is a lot but it should be fine for like 99% of impls
-            // if new_ip == 0 as *const u32 {
-            //     println!("lua-replace personality routine failed to find landing pad magic number 0xB000B1E5.");
-            //     ret = _URC_FATAL_PHASE2_ERROR;
-            // }
-            // else {
-            //     _Unwind_SetIP(context, new_ip as u64);
-            //     ret = _URC_INSTALL_CONTEXT;
-            // }
         }
     }
     ret
