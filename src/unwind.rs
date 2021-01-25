@@ -1,4 +1,4 @@
-use skyline::{hook, hooks::A64HookFunction, install_hooks};
+use skyline::{hook, install_hooks};
 use skyline::hooks::InlineCtx;
 use skyline::nn; // for LookupSymbol
 use skyline::libc;
@@ -69,7 +69,8 @@ unsafe fn byte_search(start: *const u32, want: u32, distance: usize) -> *const u
     ret
 }
 
-unsafe extern "C" fn custom_personality(version: i32, actions: u64, exception_class: u64, unwind_exception: *mut u64, context: *mut u64) -> u64 {
+#[allow(unused_assignments)]
+unsafe extern "C" fn custom_personality(version: i32, actions: u64, _: u64, _: *mut u64, context: *mut u64) -> u64 {
     let mut ret = _URC_FATAL_PHASE1_ERROR;
     if version != 1 {
         println!("[lua-replace] Personality routine called in the wrong context.");

@@ -78,12 +78,12 @@ unsafe fn sv_set_function_hash_replace(agent: &mut L2CAgent, mut function: Scrip
 }
 
 #[no_mangle]
-pub unsafe extern "Rust" fn lua_replace_acmd_func(fighter: &'static str, script: Hash40, func: ScriptBootstrapperFunc) {
+pub unsafe extern "Rust" fn lua_replace_script(fighter: &'static str, script: Hash40, func: ScriptBootstrapperFunc) {
     let (plug_start, plug_end) = skyline::info::containing_plugin(std::mem::transmute(func as *const fn()));
     if plug_start == 0 || plug_end == 0 {
         println!("[lua-replace] Failed to get plugin information for replacement script -- skipping.");
     }
-    let nro = unwind::Nro { start: plug_start, end: plug_end };
+    let nro = unwind::Nro::new(plug_start, plug_end);
     let mut registered_plugs = CURRENT_NROS.lock();
     if !registered_plugs.contains(&nro) {
         println!("[lua-replace] Registered user: {:X} {:X}", nro.start, nro.end);
@@ -97,7 +97,7 @@ pub unsafe extern "Rust" fn lua_replace_acmd_func(fighter: &'static str, script:
             x.push(info);
         }
         else {
-            println!("[lua-replace] ACMD script has already been replaced -- skipping.");
+            println!("[lua-replace] Script has already been replaced -- skipping.");
         }
     } else {
         func_map.insert(String::from(fighter), vec![info]);
@@ -107,7 +107,7 @@ pub unsafe extern "Rust" fn lua_replace_acmd_func(fighter: &'static str, script:
 fn nro_load_hook(info: &NroInfo) {
     match info.name {
         "common" => {
-            skyline::install_hook!(sv_set_function_hash_replace);
+            install_hook!(sv_set_function_hash_replace);
         },
         "item" => {}, // We don't want to register the item module since it isn't compatible yet
         name => {
@@ -119,7 +119,7 @@ fn nro_load_hook(info: &NroInfo) {
                 let mod_start = (*info.module.ModuleObject).module_base;
                 let mod_end = mod_start + 0xFFFFFFFF; // safe, should probably figure this out.
 
-                nro_map.insert(String::from(name), unwind::Nro { start: mod_start, end: mod_end });
+                nro_map.insert(String::from(name), unwind::Nro::new(mod_start, mod_end));
             }
             println!("[lua-replace] Registered {}", name);
         }
@@ -143,6 +143,6 @@ fn nro_unload_hook(info: &NroInfo) {
 pub fn main() {
     unwind::install_hooks();
     check::install_hooks();
-    nro::add_hook(nro_load_hook);
-    nro::add_unload_hook(nro_unload_hook);
+    nro::add_hook(nro_load_hook).unwrap();
+    nro::add_unload_hook(nro_unload_hook).unwrap();
 }

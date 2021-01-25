@@ -20,7 +20,7 @@ static HASHES: [usize; 3] = [EFFECT_HASH, GAME_HASH, SOUND_HASH];
 
 static mut CURRENT_OFF: usize = EFFECT_RESET;
 #[skyline::hook(offset = CURRENT_OFF, inline)]
-unsafe fn reset(ctx: &skyline::hooks::InlineCtx) {
+unsafe fn reset(_: &skyline::hooks::InlineCtx) {
     HASH = None;
 }
 
