@@ -12,16 +12,32 @@ use std::vec::Vec;
 
 mod unwind;
 mod check;
+mod rtld;
+mod silent;
 
-type ScriptBootstrapperFunc = extern "C" fn(&mut L2CFighterCommon, &mut utility::Variadic);
+type ScriptBootstrapperFunc = extern "C" fn(&mut L2CAgentBase, &mut utility::Variadic);
+type StatusFunc = extern "C" fn(&mut L2CFighterBase) -> L2CValue;
 type SysLineControlFunc = extern "C" fn(&mut L2CFighterCommon) -> L2CValue;
 type SysLineCallbackFunc = fn(&mut L2CFighterCommon);
 type SysLineWeaponControlFunc = extern "C" fn(&mut L2CFighterBase) -> L2CValue;
 type SysLineWeaponCallbackFunc = fn(&mut L2CFighterBase);
 
-struct ScriptInfo {
+pub struct ScriptInfo {
     name: Hash40,
     replace: ScriptBootstrapperFunc
+}
+
+pub struct StatusInfo {
+    status: LuaConst,
+    condition: LuaConst,
+    replace: StatusFunc
+}
+
+pub enum ScriptCategory {
+    EFFECT,
+    EXPRESSION,
+    GAME,
+    SOUND
 }
 
 impl PartialEq for ScriptInfo {
@@ -38,78 +54,19 @@ lazy_static::lazy_static! {
     static ref SYS_WPN_MAP: Mutex<HashMap<LuaConst, SysLineWeaponControlFunc>> = Mutex::new(HashMap::new());
 }
 
+lazy_static::lazy_static! {
+    pub static ref EFFECT_MAP: Mutex<HashMap<u64, Vec<ScriptInfo>>> = Mutex::new(HashMap::new());
+    pub static ref EXPRESSION_MAP: Mutex<HashMap<u64, Vec<ScriptInfo>>> = Mutex::new(HashMap::new());
+    pub static ref GAME_MAP: Mutex<HashMap<u64, Vec<ScriptInfo>>> = Mutex::new(HashMap::new());
+    pub static ref SOUND_MAP: Mutex<HashMap<u64, Vec<ScriptInfo>>> = Mutex::new(HashMap::new());
+    pub static ref STATUS_MAP: Mutex<HashMap<u64, Vec<StatusInfo>>> = Mutex::new(HashMap::new());
+}
+
 // no lazy_static because these are vecs :)
 static mut FTR_CALLBACKS: Mutex<Vec<SysLineCallbackFunc>> = Mutex::new(Vec::new());
 static mut WPN_CALLBACKS: Mutex<Vec<SysLineWeaponCallbackFunc>> = Mutex::new(Vec::new());
 
-unsafe fn get_module_name(function: ScriptBootstrapperFunc) -> Option<String> {
-    let map = NRO_MAP.lock();
-    let mut ret: Option<String> = None;
-
-    let func: u64 = std::mem::transmute(function as *const fn());
-
-    for (fighter, nro) in map.iter() {
-        if nro.start < func && func < nro.end {
-            ret = Some(fighter.clone());
-            break;
-        }
-    }
-    ret
-}
-
-#[hook(replace = L2CAgent_sv_set_function_hash)]
-unsafe extern "C" fn sv_set_function_hash_replace(agent: &mut L2CAgent, mut function: ScriptBootstrapperFunc, hash: Hash40) {
-    let fighter = get_module_name(function).unwrap_or("".to_owned());
-    let mut test_hash: Hash40 = Hash40::new_raw(0);
-    if check::HASH.is_none() && fighter != "" {
-        test_hash = Hash40::new(fighter.as_str());
-    }
-    else if check::HASH.is_some() {
-        test_hash = check::HASH.unwrap();
-    }
-    let funcs = FUNC_MAP.lock();
-
-    for (agent, scripts) in funcs.iter() {
-        let mut breakable = false;
-        if Hash40::new(agent.as_str()).hash == test_hash.hash {
-            for script in scripts.iter() {
-                if script.name.hash == hash.hash {
-                    function = script.replace;
-                    breakable = true;
-                    break;
-                }
-            }
-        }
-        if breakable {
-            break;
-        }
-    }
-    original!()(agent, function, hash)
-}
-
-extern "C" {
-    #[link_name = "\u{1}_ZN3lib8L2CValueC1ERKS0_"]
-    fn copy_l2cvalue(dst: &mut L2CValue, src: &L2CValue);
-
-    #[link_name = "\u{1}_ZN7lua2cpp16L2CFighterCommon32bind_hash_call_call_check_damageEPN3lib8L2CAgentERNS1_7utility8VariadicEPKcSt9__va_list"]
-    fn L2CFighterCommon_bind_hash_call_call_check_damage();
-
-    #[link_name = "\u{1}_ZN7lua2cpp16L2CFighterCommon32bind_hash_call_call_check_attackEPN3lib8L2CAgentERNS1_7utility8VariadicEPKcSt9__va_list"]
-    fn L2CFighterCommon_bind_hash_call_call_check_attack();
-
-    #[link_name = "\u{1}_ZN7lua2cpp16L2CFighterCommon32bind_hash_call_call_on_change_lrEPN3lib8L2CAgentERNS1_7utility8VariadicEPKcSt9__va_list"]
-    fn L2CFighterCommon_bind_hash_call_call_on_change_lr();
-
-    #[link_name = "\u{1}_ZN7lua2cpp16L2CFighterCommon30bind_hash_call_call_leave_stopEPN3lib8L2CAgentERNS1_7utility8VariadicEPKcSt9__va_list"]
-    fn L2CFighterCommon_bind_hash_call_call_leave_stop();
-
-    #[link_name = "\u{1}_ZN7lua2cpp16L2CFighterCommon40bind_hash_call_call_notify_event_gimmickEPN3lib8L2CAgentERNS1_7utility8VariadicEPKcSt9__va_list"]
-    fn L2CFighterCommon_bind_hash_call_call_notify_event_gimmick();
-
-    #[link_name = "\u{1}_ZN7lua2cpp16L2CFighterCommon30bind_hash_call_call_calc_paramEPN3lib8L2CAgentERNS1_7utility8VariadicEPKcSt9__va_list"]
-    fn L2CFighterCommon_bind_hash_call_call_calc_param();
-}
-
+// I was never able to get this working, if somebody else wants to take a stab at it feel free.
 // #[hook(replace = L2CFighterCommon_sys_line_system_init)]
 // unsafe extern "C" fn sys_line_system_fighter_init_replace(fighter: &mut L2CFighterCommon) -> L2CValue {
 //     use smash::hash40;
@@ -163,8 +120,7 @@ unsafe fn sys_line_weapon_hot_patch(ctx: &skyline::hooks::InlineCtx) {
     let kind = smash::app::utility::get_kind(boma);
     let wpn_map = SYS_WPN_MAP.lock();
     *l2c_val = L2CValue::new_ptr(std::mem::transmute(L2CFighterBase_sys_line_system_control as *const extern "C" fn()));
-    let ftr_map = SYS_FTR_MAP.lock();
-    for (agent, func) in ftr_map.iter() {
+    for (agent, func) in wpn_map.iter() {
         if *agent == kind {
             *l2c_val = L2CValue::new_ptr(std::mem::transmute(*func));
         }
@@ -190,7 +146,30 @@ unsafe extern "C" fn sys_line_system_control_weapon_hook(fighter: &mut L2CFighte
 }
 
 #[no_mangle]
-pub unsafe extern "Rust" fn replace_lua_script(fighter: &'static str, script: Hash40, func: ScriptBootstrapperFunc) {
+pub unsafe extern "Rust" fn replace_status_script(agent: Hash40, status: LuaConst, condition: LuaConst, func: StatusFunc) {
+    let (plug_start, plug_end) = skyline::info::containing_plugin(std::mem::transmute(func as *const fn()));
+    if plug_start == 0 || plug_end == 0 {
+        println!("[lua-replace] Failed to get plugin information for replacement script -- skipping.");
+    }
+    let nro = unwind::Nro::new(plug_start, plug_end);
+    let mut registered_plugs = CURRENT_NROS.lock();
+    if !registered_plugs.contains(&nro) {
+        println!("[lua-replace] Registered user: {:X} {:X}", nro.start, nro.end);
+        registered_plugs.push(nro);
+    }
+
+    let info = StatusInfo { status: status, condition: condition, replace: func };
+    let mut map = STATUS_MAP.lock();
+    if let Some(x) = map.get_mut(&agent.hash) {
+        x.push(info); // not able to perform checking of replacements, since we can't deref lua consts
+    }
+    else {
+        map.insert(agent.hash, vec![info]);
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "Rust" fn replace_lua_script(agent: Hash40, script: Hash40, func: ScriptBootstrapperFunc, category: ScriptCategory) {
     let (plug_start, plug_end) = skyline::info::containing_plugin(std::mem::transmute(func as *const fn()));
     if plug_start == 0 || plug_end == 0 {
         println!("[lua-replace] Failed to get plugin information for replacement script -- skipping.");
@@ -203,16 +182,66 @@ pub unsafe extern "Rust" fn replace_lua_script(fighter: &'static str, script: Ha
     }
 
     let info = ScriptInfo { name: script, replace: func };
-    let mut func_map = FUNC_MAP.lock();
-    if let Some(x) = func_map.get_mut(fighter) {
-        if !x.contains(&info) {
-            x.push(info);
+    match category {
+        ScriptCategory::EFFECT => {
+            let mut map = EFFECT_MAP.lock();
+            if let Some(x) = map.get_mut(&agent.hash) {
+                if !x.contains(&info) {
+                    x.push(info);
+                }
+                else {
+                    println!("[lua-replace] Script has already been replaced | Agent: {:#x}, Script: {:#x}", agent.hash, info.name.hash);
+                }
+            }
+            else {
+                map.insert(agent.hash, vec![info]);
+            }
+        },
+        ScriptCategory::EXPRESSION => {
+            let mut map = EXPRESSION_MAP.lock();
+            if let Some(x) = map.get_mut(&agent.hash) {
+                if !x.contains(&info) {
+                    x.push(info);
+                }
+                else {
+                    println!("[lua-replace] Script has already been replaced | Agent: {:#x}, Script: {:#x}", agent.hash, info.name.hash);
+                }
+            }
+            else {
+                map.insert(agent.hash, vec![info]);
+            }
+        },
+        ScriptCategory::GAME => {
+            let mut map = GAME_MAP.lock();
+            if let Some(x) = map.get_mut(&agent.hash) {
+                if !x.contains(&info) {
+                    x.push(info);
+                }
+                else {
+                    println!("[lua-replace] Script has already been replaced | Agent: {:#x}, Script: {:#x}", agent.hash, info.name.hash);
+                }
+            }
+            else {
+                map.insert(agent.hash, vec![info]);
+            }
+        },
+        ScriptCategory::SOUND => {
+            let mut map = SOUND_MAP.lock();
+            if let Some(x) = map.get_mut(&agent.hash) {
+                if !x.contains(&info) {
+                    x.push(info);
+                }
+                else {
+                    println!("[lua-replace] Script has already been replaced | Agent: {:#x}, Script: {:#x}", agent.hash, info.name.hash);
+                }
+            }
+            else {
+                map.insert(agent.hash, vec![info]);
+            }
+        },
+        _ => {
+            panic!("Invalid script category");
         }
-        else {
-            println!("[lua-replace] Script has already been replaced -- skipping.");
-        }
-    } else {
-        func_map.insert(String::from(fighter), vec![info]);
     }
 }
 
@@ -280,26 +309,34 @@ fn nro_load_hook(info: &NroInfo) {
                 SYS_LINE_SYSTEM_INIT_SHIFT_CALL_WPN = (*info.module.ModuleObject).module_base as usize + 0x5ecc;
             }
             install_hooks!(
-                sv_set_function_hash_replace,
+                // sv_set_function_hash_replace,
                 sys_line_fighter_hot_patch,
                 sys_line_weapon_hot_patch,
                 sys_line_system_control_fighter_hook,
-                sys_line_system_control_weapon_hook
+                sys_line_system_control_weapon_hook,
+                // call_coroutine
             );
+            // unsafe {
+            //     let sym = rtld::get_symbol_by_name(info.module.ModuleObject as *const nnsdk::root::rtld::ModuleObject, "_ZN7lua2cpp16L2CFighterCommon32bind_hash_call_call_check_damageEPN3lib8L2CAgentERNS1_7utility8VariadicEPKcSt9__va_list".to_owned());
+            //     println!("{:X}", sym as u64);
+            // }
         },
-        "item" => {}, // We don't want to register the item module since it isn't compatible yet
+        "item" => { }, // We don't want to register the item module since it isn't compatible yet
         name => {
-            let mut nro_map = NRO_MAP.lock();
-            if nro_map.contains_key(name) {
-                println!("[lua-replace] Loaded NRO already has entry in nro map. Maybe a bug? Updating entry.");
-            }
             unsafe {
-                let mod_start = (*info.module.ModuleObject).module_base;
-                let mod_end = mod_start + 0xFFFFFFFF; // safe, should probably figure this out.
-
-                nro_map.insert(String::from(name), unwind::Nro::new(mod_start, mod_end));
+                silent::set_fighter_funcs(info);
             }
-            println!("[lua-replace] Registered {}", name);
+            // let mut nro_map = NRO_MAP.lock();
+            // if nro_map.contains_key(name) {
+            //     println!("[lua-replace] Loaded NRO already has entry in nro map. Maybe a bug? Updating entry.");
+            // }
+            // unsafe {
+            //     let mod_start = (*info.module.ModuleObject).module_base;
+            //     let mod_end = mod_start + 0xFFFFFFFF; // safe, should probably figure this out.
+
+            //     nro_map.insert(String::from(name), unwind::Nro::new(mod_start, mod_end));
+            // }
+            // println!("[lua-replace] Registered {}", name);
         }
     }
 }
@@ -311,8 +348,11 @@ fn nro_unload_hook(info: &NroInfo) {
         },
         "item" => {}, // We don't want to unregister item module since we didn't register it
         name => {
-            NRO_MAP.lock().remove(&String::from(name)).unwrap();
-            println!("[lua-replace] Unregistered {}", name);
+            unsafe {
+                silent::remove_fighter_funcs(info);
+            }
+            // NRO_MAP.lock().remove(&String::from(name)).unwrap();
+            // println!("[lua-replace] Unregistered {}", name);
         }
     }
 }
@@ -320,7 +360,7 @@ fn nro_unload_hook(info: &NroInfo) {
 #[skyline::main(name = "lua-replace")]
 pub fn main() {
     unwind::install_hooks();
-    check::install_hooks();
+    // check::install_hooks();
     nro::add_hook(nro_load_hook).unwrap();
     nro::add_unload_hook(nro_unload_hook).unwrap();
 }

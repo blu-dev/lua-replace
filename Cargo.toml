@@ -13,8 +13,10 @@ crate-type = ["cdylib"]
 [dependencies]
 skyline = { path = "../skyline-rs" }
 skyline_smash = { path = "../skyline-smash" }
+nnsdk = { git = "https://github.com/ultimate-research/nnsdk-rs.git" }
 parking_lot = { version = "0.11.1", features = ["nightly"] }
 lazy_static = "1.4.0"
+aarch64-decode = { git = "https://github.com/jam1garner/aarch64-decode.git" }
 [profile.dev]
 panic = "abort"
 
